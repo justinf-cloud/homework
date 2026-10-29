@@ -25,17 +25,18 @@
     </div>
   </div>
   <div class="points-badge" id="pointsBadge">
-    <span class="star">⭐</span>
-    <span id="pointsValue">0</span>
-    <span class="unit">점</span>
+    <div class="trophies" id="trophies" hidden></div>
+    <div class="pts-line"><span id="pointsValue">0</span><span class="unit">점</span></div>
+    <div class="next-heart" id="nextHeart"></div>
   </div>
 </header>
 
 <main class="layout">
   <section class="card today">
     <div class="week" id="weekStrip"></div>
+    <div class="weekly-summary" id="weeklySummary" hidden></div>
     <div id="pastNotice" class="past-notice" hidden>
-      지난 날짜예요. 고치려면 부모님 비밀번호가 필요해요.
+      어제까지는 직접 고칠 수 있어요. 구몬은 이번 주(화~월) 안이면 언제든 돼요. 그 밖의 날짜는 부모님 비밀번호가 필요해요.
       <button id="unlockPast" class="btn small">고치기</button>
     </div>
     <ul class="hw-list" id="hwList"></ul>
@@ -45,7 +46,12 @@
       <input id="extraInput" type="text" placeholder="추가 숙제 적기 (예: 받아쓰기 연습)" maxlength="40">
       <button class="btn primary" type="submit">＋ 추가</button>
     </form>
-    <p class="legend"><b class="lg done">✓ 다 했어요</b> 포인트 전부 · <b class="lg half">△ 하다 말았어요</b> 포인트 조금</p>
+    <p class="legend"><b class="lg done">✓ 다 했어요</b> 포인트 전부 · <b class="lg half">△ 하다 말았어요</b> 포인트 조금 · 그날 못 하고 다음날 체크하면 절반 (구몬은 이번 주 안이면 괜찮아요)</p>
+
+    <div id="bonusBox" class="bonus-box" hidden>
+      <h3>🌟 보너스 <small>안 해도 괜찮지만, 하면 포인트가 더! 연속으로 하면 🔥 보너스</small></h3>
+      <ul class="hw-list" id="bonusList"></ul>
+    </div>
   </section>
 
   <aside class="side">
@@ -58,13 +64,10 @@
     <section class="card tools">
       <h2>🧰 도구</h2>
       <form id="dictForm" class="dict-form" autocomplete="off">
-        <input id="dictInput" type="text" placeholder="영어 단어 찾기" autocapitalize="off" spellcheck="false">
+        <input id="dictInput" type="search" enterkeyhint="search" placeholder="영어 단어 찾기" autocapitalize="off" spellcheck="false">
+        <button class="btn primary" type="submit">🔍 찾기</button>
       </form>
-      <div class="dict-btns">
-        <button class="btn" data-dict="naver">네이버 사전</button>
-        <button class="btn" data-dict="daum">다음 사전</button>
-        <button class="btn" data-dict="papago">파파고 번역</button>
-      </div>
+      <p class="hint dict-hint">네이버 영어사전에서 찾아줘요</p>
       <button class="btn qr-btn" id="openQr">📷 QR 코드 읽기</button>
     </section>
   </aside>
@@ -101,6 +104,14 @@
         <option value="0.3">30%</option><option value="0.5">50%</option><option value="0.7">70%</option>
       </select></label>
       <label class="row">추가 숙제 등록할 때 비밀번호 받기 <input id="setLockExtra" type="checkbox"></label>
+      <label class="row">보너스 2일 연속 추가 포인트 <input id="setStreak2" type="number" min="0" max="1000"></label>
+      <label class="row">보너스 3일 이상 연속 추가 포인트 (매일) <input id="setStreak3" type="number" min="0" max="1000"></label>
+    </div>
+
+    <div class="card">
+      <h3>포인트 쓰기</h3>
+      <p class="hint">지금 <b id="spendBalance">0</b>점 있어요. 보상을 누르고 한 번 더 누르면 그만큼 빠져요.</p>
+      <div id="spendList" class="spend-list"></div>
     </div>
 
     <div class="card">
@@ -110,7 +121,7 @@
     </div>
 
     <div class="card">
-      <h3>포인트 직접 주기 / 빼기</h3>
+      <h3>포인트 직접 주기 / 빼기 (보상 목록에 없는 것)</h3>
       <form id="adjustForm" class="adjust-form" autocomplete="off">
         <input id="adjustAmount" type="number" placeholder="+20 또는 -10">
         <input id="adjustMemo" type="text" placeholder="이유 (예: 방 청소 칭찬)" maxlength="30">

@@ -1,5 +1,5 @@
 // 오프라인에서도 열리도록 앱 파일을 저장해 둠. 파일을 고치면 VERSION을 올릴 것.
-const VERSION = 'v1';
+const VERSION = 'v5';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'jsQR.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (e) => {

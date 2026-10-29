@@ -3,7 +3,12 @@
 // ---------- 저장소 ----------
 const KEY = 'homework-app-v1';
 const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
+const EVERY_DAY = [0, 1, 2, 3, 4, 5, 6];
 const PAST_DAYS = 6; // 오늘 포함 7일을 볼 수 있음
+const KUMON_DAYS = [0, 1, 3, 4, 5, 6]; // 화요일 빼고 매일
+const LATE_RATIO = 0.5; // 그날 못 하고 다음날 이후에 체크하면 절반
+// 포인트를 그림으로: 1,000점 하트, 10,000점 별, 100,000점 왕관
+const HEART = 1000, STAR = 10000, CROWN = 100000;
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const $ = (id) => document.getElementById(id);
@@ -12,41 +17,66 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 function dateKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+function keyToDate(k) { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); }
 function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
 function startOfToday() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
 
 function defaultData() {
   const weekdays = [1, 2, 3, 4, 5];
   return {
-    settings: { pin: '0000', childName: '', extraPoints: 10, halfRatio: 0.5, lockExtra: false },
+    settings: { pin: '0000', childName: '', extraPoints: 10, halfRatio: 0.5, lockExtra: false, streak2: 5, streak3: 10 },
     startedAt: dateKey(new Date()), // 이 날 이전은 '안 한 날'로 표시하지 않음
+    // weekly: 화~월 한 주 안에 언제든 체크, bonus: 안 해도 되는 보너스(연속 보너스 있음)
     fixed: [
       { id: uid(), emoji: '🔢', name: '수학 문제집', days: weekdays, points: 10 },
       { id: uid(), emoji: '🔤', name: '영어 단어 외우기', days: weekdays, points: 10 },
-      { id: uid(), emoji: '📚', name: '책 읽기 30분', days: [0, 1, 2, 3, 4, 5, 6], points: 10 },
     ],
     rewards: [
       { id: uid(), emoji: '🍦', name: '아이스크림', cost: 100 },
       { id: uid(), emoji: '🎮', name: '게임 30분', cost: 200 },
       { id: uid(), emoji: '🎁', name: '갖고 싶은 선물', cost: 1000 },
     ],
-    // days[날짜] = { fixed: { 숙제id: { s: 'done'|'half', p: 받은 포인트 } }, extras: [{ id, name, points, s, p }] }
+    // days[날짜] = { fixed: { 숙제id: 기록 }, extras: [{ id, name, points, ...기록 }] }
+    // 기록 = { s: 'done'|'half'|null, p: 받은 포인트, h: △를 찍은 적 있음, late: 다음날 이후 완성 }
     days: {},
-    // 보상 사용, 직접 준 포인트 등: { at, amount, memo }
+    // 포인트 사용, 직접 준 포인트 등: { at, amount, memo }
     ledger: [],
   };
+}
+
+// 이미 쓰던 데이터에도 새 기본 숙제를 한 번만 넣어 줌
+function migrate(d) {
+  d.migrated = d.migrated || [];
+  if (!d.migrated.includes('kumon')) {
+    const kumon = d.fixed.filter((f) => f.name.includes('구몬'));
+    if (kumon.length) kumon.forEach((f) => { f.weekly = true; });
+    else d.fixed.unshift(
+      { id: uid(), emoji: '📘', name: '구몬 수학', days: KUMON_DAYS, points: 10, weekly: true },
+      { id: uid(), emoji: '📗', name: '구몬 국어', days: KUMON_DAYS, points: 10, weekly: true },
+    );
+    d.migrated.push('kumon');
+  }
+  if (!d.migrated.includes('bonusRead')) {
+    d.fixed.push(
+      { id: uid(), emoji: '📕', name: '영어책 읽기', days: EVERY_DAY, points: 10, bonus: true },
+      { id: uid(), emoji: '📙', name: '한글책 읽기', days: EVERY_DAY, points: 10, bonus: true },
+    );
+    d.migrated.push('bonusRead');
+  }
+  return d;
+}
+
+function fromSaved(d) {
+  const base = defaultData();
+  return migrate({ ...base, ...d, settings: { ...base.settings, ...d.settings } });
 }
 
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) {
-      const d = JSON.parse(raw);
-      const base = defaultData();
-      return { ...base, ...d, settings: { ...base.settings, ...d.settings } };
-    }
+    if (raw) return fromSaved(JSON.parse(raw));
   } catch (e) { /* 저장소를 못 쓰면 기본값으로 */ }
-  return defaultData();
+  return migrate(defaultData());
 }
 
 let data = load();
@@ -57,20 +87,57 @@ function save() {
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
 // ---------- 포인트 ----------
-function earned(s, points) {
-  if (s === 'done') return points;
-  if (s === 'half') return Math.round(points * data.settings.halfRatio);
+function earned(s, points, late) {
+  let p = 0;
+  if (s === 'done') p = points;
+  if (s === 'half') p = points * data.settings.halfRatio;
+  return Math.round(late ? p * LATE_RATIO : p);
+}
+
+// 체크 버튼을 눌렀을 때 기록 바꾸기.
+// 그 날짜가 지난 뒤에 체크하면 늦은 체크(절반). 주간 숙제(구몬)는 이번 주 안이면 괜찮지만,
+// △를 찍어 둔 것을 다음날 이후에 ✓하면 절반. 부모님이 비밀번호로 고칠 때는 그대로.
+function isLateCheck(entry, weekly, key) {
+  if (!entry.s || pastUnlocked || key >= dateKey(startOfToday())) return false;
+  if (weekly && inThisWeek(keyToDate(key))) return entry.s === 'done' && !!entry.h;
+  return true;
+}
+function applyCheck(entry, want, points, key, weekly) {
+  entry.s = entry.s === want ? null : want;
+  if (entry.s === 'half') entry.h = true;
+  entry.late = isLateCheck(entry, weekly, key);
+  entry.p = earned(entry.s, points, entry.late);
+}
+
+// 보너스 숙제 연속 기록 (늦은 완성은 연속으로 치지 않음)
+function succeeded(key, id) {
+  const r = data.days[key];
+  const v = r && r.fixed[id];
+  return !!(v && v.s === 'done' && !v.late);
+}
+function streakAt(id, date) {
+  let n = 0;
+  for (let d = new Date(date); n < 1000 && succeeded(dateKey(d), id); d = addDays(d, -1)) n++;
+  return n;
+}
+function streakBonus(n) {
+  if (n >= 3) return data.settings.streak3;
+  if (n === 2) return data.settings.streak2;
   return 0;
 }
-function dayPoints(rec) {
+function dayTotal(key, rec) {
   let sum = 0;
   for (const v of Object.values(rec.fixed || {})) sum += v.p || 0;
   for (const e of rec.extras || []) sum += e.p || 0;
+  const date = keyToDate(key);
+  for (const f of data.fixed) {
+    if (f.bonus && succeeded(key, f.id)) sum += streakBonus(streakAt(f.id, date));
+  }
   return sum;
 }
 function balance() {
   let sum = 0;
-  for (const rec of Object.values(data.days)) sum += dayPoints(rec);
+  for (const [key, rec] of Object.entries(data.days)) sum += dayTotal(key, rec);
   for (const l of data.ledger) sum += l.amount;
   return sum;
 }
@@ -89,12 +156,20 @@ function itemsFor(date) {
   const wd = date.getDay();
   const items = data.fixed
     .filter((f) => f.days.includes(wd) || rec.fixed[f.id])
-    .map((f) => ({ kind: 'fixed', id: f.id, emoji: f.emoji, name: f.name, points: f.points, s: rec.fixed[f.id] ? rec.fixed[f.id].s : null }));
-  for (const e of rec.extras) items.push({ kind: 'extra', id: e.id, emoji: '✏️', name: e.name, points: e.points, s: e.s });
+    .map((f) => ({ kind: 'fixed', id: f.id, emoji: f.emoji, name: f.name, points: f.points, weekly: !!f.weekly, bonus: !!f.bonus, ...(rec.fixed[f.id] || {}) }));
+  for (const e of rec.extras) items.push({ kind: 'extra', emoji: '✏️', ...e });
   return items;
 }
+const homeworkOf = (items) => items.filter((x) => !x.bonus);
+
 function isToday() { return dateKey(viewDate) === dateKey(startOfToday()); }
-function canEdit() { return isToday() || pastUnlocked; }
+function isYesterday() { return dateKey(viewDate) === dateKey(addDays(startOfToday(), -1)); }
+// 어제 숙제까지는 아이가 직접 고칠 수 있고, 그 전은 부모님 비밀번호가 필요함
+function canEdit() { return isToday() || isYesterday() || pastUnlocked; }
+// 주간 숙제(구몬)는 화~월 한 주 안이면 언제든 체크할 수 있음
+function weekStart(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); return addDays(x, -((x.getDay() + 5) % 7)); }
+function inThisWeek(d) { return dateKey(weekStart(d)) === dateKey(weekStart(startOfToday())); }
+function itemEditable(weekly) { return canEdit() || (weekly && inThisWeek(viewDate)); }
 
 // ---------- 그리기 ----------
 function render() {
@@ -104,14 +179,42 @@ function render() {
 
   const today = startOfToday();
   const label = `${viewDate.getMonth() + 1}월 ${viewDate.getDate()}일 (${DAY_NAMES[viewDate.getDay()]})`;
-  $('dateLabel').textContent = isToday() ? `${label} · 오늘` : label;
+  $('dateLabel').textContent = isToday() ? `${label} · 오늘` : isYesterday() ? `${label} · 어제` : label;
   $('prevDay').disabled = viewDate <= addDays(today, -PAST_DAYS);
   $('nextDay').disabled = isToday();
 
   renderWeek(today);
+  renderWeeklySummary(today);
   renderList();
   renderRewards();
-  $('pointsValue').textContent = balance().toLocaleString();
+  renderPoints();
+}
+
+function renderPoints() {
+  const bal = balance();
+  const pos = Math.max(0, bal);
+  const crowns = Math.floor(pos / CROWN);
+  const stars = Math.floor((pos % CROWN) / STAR);
+  const hearts = Math.floor((pos % STAR) / HEART);
+  $('trophies').innerHTML =
+    '<span class="crown">👑</span>'.repeat(crowns) +
+    '<span class="star">⭐</span>'.repeat(stars) +
+    '<span class="heart">❤️</span>'.repeat(hearts);
+  $('trophies').hidden = !(crowns || stars || hearts);
+  $('pointsValue').textContent = bal.toLocaleString();
+  $('nextHeart').textContent = `다음 ❤️까지 ${(HEART - (pos % HEART)).toLocaleString()}점`;
+}
+
+// 하트·별·왕관을 새로 모으면 축하
+function celebrateLevel(before, after) {
+  const levels = [[CROWN, '👑 대형 왕관'], [STAR, '⭐ 별'], [HEART, '❤️ 하트']];
+  for (const [unit, name] of levels) {
+    if (Math.floor(after / unit) > Math.floor(before / unit)) {
+      confetti();
+      toast(`${name}을(를) 모았어요! 대단해요!`);
+      return;
+    }
+  }
 }
 
 function renderWeek(today) {
@@ -119,7 +222,7 @@ function renderWeek(today) {
   strip.innerHTML = '';
   for (let i = PAST_DAYS; i >= 0; i--) {
     const d = addDays(today, -i);
-    const items = itemsFor(d);
+    const items = homeworkOf(itemsFor(d));
     const done = items.filter((x) => x.s === 'done').length;
     let mark = '·';
     if (items.length && done === items.length) mark = '⭐';
@@ -133,33 +236,77 @@ function renderWeek(today) {
   }
 }
 
+// 이번 주(화~월) 주간 숙제를 몇 번 했는지
+function renderWeeklySummary(today) {
+  const weekly = data.fixed.filter((f) => f.weekly && !f.bonus);
+  const box = $('weeklySummary');
+  box.hidden = !weekly.length;
+  if (!weekly.length) return;
+  const start = weekStart(today);
+  box.innerHTML = '<b>이번 주 (화~월)</b> ' + weekly.map((f) => {
+    let total = 0, done = 0;
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(start, i);
+      if (!f.days.includes(d.getDay())) continue;
+      total++;
+      const v = dayRec(dateKey(d)).fixed[f.id];
+      if (v && v.s === 'done') done++;
+    }
+    return `<span class="ws-item">${esc(f.emoji)} ${esc(f.name)} <b>${done}/${total}</b></span>`;
+  }).join('');
+}
+
+function itemHtml(it) {
+  const ok = it.bonus ? canEdit() : itemEditable(it.weekly);
+  const tag = it.kind === 'extra' ? '<span class="tag-extra">추가</span>' : it.weekly ? '<span class="tag-extra weekly">이번 주 안에</span>' : '';
+  const pastDay = dateKey(viewDate) < dateKey(startOfToday());
+  let meta;
+  if (it.late) {
+    meta = `늦게 체크해서 절반 · ${it.p}점`;
+  } else if (pastDay && !it.s && !(it.weekly && inThisWeek(viewDate)) && !pastUnlocked) {
+    meta = it.bonus
+      ? `지금 하면 절반 · ✓ ${earned('done', it.points, true)}점 (연속 안 됨)`
+      : `지금 하면 절반 · ✓ ${earned('done', it.points, true)}점 · △ ${earned('half', it.points, true)}점`;
+  } else if (it.bonus) {
+    meta = `✓ ${it.points}점`;
+    if (it.s === 'done') {
+      const n = streakAt(it.id, viewDate);
+      if (n >= 2) meta += ` · 🔥 ${n}일 연속! +${streakBonus(n)}`;
+    } else {
+      const next = streakBonus(streakAt(it.id, addDays(viewDate, -1)) + 1);
+      if (next) meta += ` · 🔥 하면 연속 보너스 +${next}`;
+    }
+  } else {
+    meta = `✓ ${it.points}점 · △ ${earned('half', it.points)}점`;
+  }
+  const halfBtn = it.bonus ? '' :
+    `<button class="chk half ${it.s === 'half' ? 'on' : ''}" data-s="half" ${ok ? '' : 'disabled'} aria-label="하다 말았어요">△<small>조금</small></button>`;
+  return `<li class="hw ${it.s || ''} ${it.late ? 'late' : ''}" data-kind="${it.kind}" data-id="${it.id}" data-weekly="${it.weekly ? 1 : ''}" data-bonus="${it.bonus ? 1 : ''}">
+    <span class="hw-emoji">${esc(it.emoji || '📝')}</span>
+    <div class="hw-body">
+      <div class="hw-name">${esc(it.name)}${tag}</div>
+      <div class="hw-meta">${meta}</div>
+    </div>
+    <div class="hw-btns">
+      ${halfBtn}
+      <button class="chk done ${it.s === 'done' ? 'on' : ''}" data-s="done" ${ok ? '' : 'disabled'} aria-label="다 했어요">✓<small>다 했어</small></button>
+      ${it.kind === 'extra' && canEdit() ? '<button class="del-extra" data-del="1" aria-label="추가 숙제 지우기">✕</button>' : ''}
+    </div>
+  </li>`;
+}
+
 function renderList() {
-  const items = itemsFor(viewDate);
-  const list = $('hwList');
+  const all = itemsFor(viewDate);
+  const items = homeworkOf(all);
+  const bonus = all.filter((x) => x.bonus);
   const editable = canEdit();
-  $('pastNotice').hidden = isToday() || pastUnlocked;
+  $('pastNotice').hidden = all.length ? all.every((it) => (it.bonus ? editable : itemEditable(it.weekly))) : editable;
   $('extraForm').hidden = !editable;
 
-  if (!items.length) {
-    list.innerHTML = '<li class="empty">이 날은 정해진 숙제가 없어요 😊</li>';
-  } else {
-    list.innerHTML = items.map((it) => {
-      const half = earned('half', it.points);
-      return `<li class="hw ${it.s || ''}" data-kind="${it.kind}" data-id="${it.id}">
-        <span class="hw-emoji">${esc(it.emoji || '📝')}</span>
-        <div class="hw-body">
-          <div class="hw-name">${esc(it.name)}${it.kind === 'extra' ? '<span class="tag-extra">추가</span>' : ''}</div>
-          <div class="hw-meta">✓ ${it.points}점 · △ ${half}점</div>
-        </div>
-        <div class="hw-btns">
-          <button class="chk half ${it.s === 'half' ? 'on' : ''}" data-s="half" ${editable ? '' : 'disabled'} aria-label="하다 말았어요">△<small>조금</small></button>
-          <button class="chk done ${it.s === 'done' ? 'on' : ''}" data-s="done" ${editable ? '' : 'disabled'} aria-label="다 했어요">✓<small>다 했어</small></button>
-          ${it.kind === 'extra' && editable ? '<button class="del-extra" data-del="1" aria-label="추가 숙제 지우기">✕</button>' : ''}
-        </div>
-      </li>`;
-    }).join('');
-  }
+  $('hwList').innerHTML = items.length ? items.map(itemHtml).join('') : '<li class="empty">이 날은 정해진 숙제가 없어요 😊</li>';
   $('allDone').hidden = !(items.length && items.every((x) => x.s === 'done'));
+  $('bonusBox').hidden = !bonus.length;
+  $('bonusList').innerHTML = bonus.map(itemHtml).join('');
 }
 
 function renderRewards() {
@@ -168,59 +315,59 @@ function renderRewards() {
   const next = sorted.find((r) => r.cost > bal);
   const nr = $('nextReward');
   if (!sorted.length) nr.innerHTML = '<span class="hint">부모님 설정에서 보상을 추가해 주세요.</span>';
-  else if (next) {
-    const pct = Math.min(100, Math.round((bal / next.cost) * 100));
-    nr.innerHTML = `${esc(next.emoji)} <b>${esc(next.name)}</b>까지 <b>${(next.cost - bal).toLocaleString()}점</b> 남았어요!
-      <div class="bar"><i style="width:${Math.max(pct, 0)}%"></i></div>`;
-  } else nr.innerHTML = '🥳 모든 보상을 받을 수 있어요!';
+  else if (next) nr.innerHTML = `${esc(next.emoji)} <b>${esc(next.name)}</b>까지 <b>${(next.cost - bal).toLocaleString()}점</b> 남았어요!`;
+  else nr.innerHTML = '🥳 모든 보상을 받을 수 있어요! 부모님께 말씀드려요.';
 
-  $('rewardList').innerHTML = sorted.map((r) => `
-    <li class="reward">
+  $('rewardList').innerHTML = sorted.map((r) => {
+    const pct = Math.max(0, Math.min(100, Math.round((bal / r.cost) * 100)));
+    return `<li class="reward ${pct >= 100 ? 'ready' : ''}">
       <span class="r-emoji">${esc(r.emoji || '🎁')}</span>
-      <div class="r-body"><div class="r-name">${esc(r.name)}</div><div class="r-cost">${r.cost.toLocaleString()}점</div></div>
-      <button class="btn small ${bal >= r.cost ? 'primary' : ''}" data-reward="${r.id}" ${bal >= r.cost ? '' : 'disabled'}>받기</button>
-    </li>`).join('');
+      <div class="r-body">
+        <div class="r-top"><span class="r-name">${esc(r.name)}</span><span class="r-cost">${pct >= 100 ? '받을 수 있어요!' : `${bal.toLocaleString()} / ${r.cost.toLocaleString()}점`}</span></div>
+        <div class="bar"><i style="width:${pct}%"></i></div>
+      </div>
+    </li>`;
+  }).join('');
 }
 
 // ---------- 숙제 체크 ----------
-$('hwList').addEventListener('click', (ev) => {
+function onListClick(ev) {
   const li = ev.target.closest('.hw');
-  if (!li || !canEdit()) return;
+  if (!li) return;
+  const isBonus = !!li.dataset.bonus;
+  if (!(isBonus ? canEdit() : itemEditable(!!li.dataset.weekly))) return;
   const key = dateKey(viewDate);
   const rec = dayRec(key, true);
   const { kind, id } = li.dataset;
 
-  if (ev.target.closest('[data-del]')) {
+  if (ev.target.closest('[data-del]') && canEdit()) {
     rec.extras = rec.extras.filter((e) => e.id !== id);
     save(); render();
     return;
   }
   const btn = ev.target.closest('.chk');
   if (!btn) return;
-  const want = btn.dataset.s;
 
-  let before = 0, after = 0;
+  const before = balance();
+  const wasAllDone = !$('allDone').hidden;
   if (kind === 'fixed') {
     const f = data.fixed.find((x) => x.id === id);
-    const cur = rec.fixed[id];
-    before = cur ? cur.p : 0;
-    if (cur && cur.s === want) delete rec.fixed[id];
-    else rec.fixed[id] = { s: want, p: earned(want, f ? f.points : 0) };
-    after = rec.fixed[id] ? rec.fixed[id].p : 0;
+    const entry = rec.fixed[id] || { s: null, p: 0 };
+    applyCheck(entry, btn.dataset.s, f ? f.points : 0, key, !!(f && f.weekly));
+    if (entry.s || entry.h) rec.fixed[id] = entry; else delete rec.fixed[id];
   } else {
     const e = rec.extras.find((x) => x.id === id);
-    before = e.p || 0;
-    e.s = e.s === want ? null : want;
-    e.p = earned(e.s, e.points);
-    after = e.p;
+    applyCheck(e, btn.dataset.s, e.points, key, false);
   }
   save();
-  const wasAllDone = !$('allDone').hidden;
   render();
-  const delta = after - before;
-  if (delta) floatPoints(btn, delta);
+  const after = balance();
+  if (after !== before) floatPoints(btn, after - before);
   if (!wasAllDone && !$('allDone').hidden) confetti();
-});
+  celebrateLevel(before, after);
+}
+$('hwList').addEventListener('click', onListClick);
+$('bonusList').addEventListener('click', onListClick);
 
 $('extraForm').addEventListener('submit', async (ev) => {
   ev.preventDefault();
@@ -245,32 +392,14 @@ function checkDayChange() {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkDayChange(); });
 setInterval(checkDayChange, 60 * 1000);
 
-// ---------- 보상 ----------
-$('rewardList').addEventListener('click', async (ev) => {
-  const b = ev.target.closest('[data-reward]');
-  if (!b) return;
-  const r = data.rewards.find((x) => x.id === b.dataset.reward);
-  if (!r || balance() < r.cost) return;
-  if (!(await askPin(`'${r.name}' 보상 주기`))) return;
-  data.ledger.push({ at: Date.now(), amount: -r.cost, memo: `보상: ${r.name}` });
-  save(); render();
-  confetti();
-  toast(`${r.emoji || '🎁'} ${r.name} 보상을 받았어요!`);
-});
-
-// ---------- 도구: 사전 ----------
-const DICTS = {
-  naver: (w) => `https://en.dict.naver.com/#/search?query=${encodeURIComponent(w)}`,
-  daum: (w) => `https://dic.daum.net/search.do?q=${encodeURIComponent(w)}&dic=eng`,
-  papago: (w) => `https://papago.naver.com/?sk=en&tk=ko&st=${encodeURIComponent(w)}`,
-};
-function openDict(which) {
+// ---------- 도구: 네이버 영어사전 ----------
+$('dictForm').addEventListener('submit', (ev) => {
+  ev.preventDefault();
   const w = $('dictInput').value.trim();
   if (!w) { $('dictInput').focus(); toast('찾을 단어를 먼저 적어요'); return; }
-  window.open(DICTS[which](w), '_blank', 'noopener');
-}
-document.querySelectorAll('[data-dict]').forEach((b) => { b.onclick = () => openDict(b.dataset.dict); });
-$('dictForm').addEventListener('submit', (ev) => { ev.preventDefault(); openDict('naver'); });
+  window.open(`https://en.dict.naver.com/#/search?query=${encodeURIComponent(w)}`, '_blank', 'noopener');
+  $('dictInput').select();
+});
 
 // ---------- 도구: QR ----------
 let qrStream = null, qrTimer = null, qrFound = '';
@@ -400,8 +529,11 @@ function renderSettings() {
   $('setExtraPoints').value = s.extraPoints;
   $('setHalfRatio').value = String(s.halfRatio);
   $('setLockExtra').checked = s.lockExtra;
+  $('setStreak2').value = s.streak2;
+  $('setStreak3').value = s.streak3;
   renderFixedEditor();
   renderRewardEditor();
+  renderSpend();
   renderLedger();
 }
 
@@ -412,6 +544,8 @@ function renderFixedEditor() {
       <input class="e-name" data-f="name" value="${esc(f.name)}" maxlength="30" placeholder="숙제 이름">
       <input class="e-num" data-f="points" type="number" min="0" value="${f.points}" aria-label="포인트"> 점
       <div class="days">${DAY_NAMES.map((n, i) => `<button type="button" data-day="${i}" class="${f.days.includes(i) ? 'on' : ''}">${n}</button>`).join('')}</div>
+      <label class="wk"><input type="checkbox" data-f="weekly" ${f.weekly ? 'checked' : ''}> 이번 주(화~월) 안에 언제든 체크</label>
+      <label class="wk"><input type="checkbox" data-f="bonus" ${f.bonus ? 'checked' : ''}> 보너스 (안 해도 괜찮음, 연속 보너스)</label>
       <button class="btn small ghost" data-remove="1">삭제</button>
     </li>`).join('');
 }
@@ -419,7 +553,9 @@ $('fixedEditor').addEventListener('input', (ev) => {
   const li = ev.target.closest('.ed-row'); const f = data.fixed.find((x) => x.id === li.dataset.id);
   const k = ev.target.dataset.f;
   if (!f || !k) return;
-  f[k] = k === 'points' ? Math.max(0, Number(ev.target.value) || 0) : ev.target.value;
+  if (k === 'points') f[k] = Math.max(0, Number(ev.target.value) || 0);
+  else if (ev.target.type === 'checkbox') f[k] = ev.target.checked;
+  else f[k] = ev.target.value;
   save();
 });
 $('fixedEditor').addEventListener('click', (ev) => {
@@ -462,11 +598,11 @@ $('rewardEditor').addEventListener('click', (ev) => {
   if (!ev.target.dataset.remove) return;
   const id = ev.target.closest('.ed-row').dataset.id;
   data.rewards = data.rewards.filter((x) => x.id !== id);
-  save(); renderRewardEditor();
+  save(); renderRewardEditor(); renderSpend();
 });
 $('addReward').onclick = () => {
   data.rewards.push({ id: uid(), emoji: '🎁', name: '', cost: 100 });
-  save(); renderRewardEditor();
+  save(); renderRewardEditor(); renderSpend();
   const inputs = $('rewardEditor').querySelectorAll('.e-name');
   inputs[inputs.length - 1].focus();
 };
@@ -475,12 +611,42 @@ $('setName').oninput = (ev) => { data.settings.childName = ev.target.value; save
 $('setExtraPoints').oninput = (ev) => { data.settings.extraPoints = Math.max(0, Number(ev.target.value) || 0); save(); };
 $('setHalfRatio').onchange = (ev) => { data.settings.halfRatio = Number(ev.target.value); save(); };
 $('setLockExtra').onchange = (ev) => { data.settings.lockExtra = ev.target.checked; save(); };
+$('setStreak2').oninput = (ev) => { data.settings.streak2 = Math.max(0, Number(ev.target.value) || 0); save(); };
+$('setStreak3').oninput = (ev) => { data.settings.streak3 = Math.max(0, Number(ev.target.value) || 0); save(); };
+
+// 포인트 쓰기: 보상 버튼을 한 번 누르면 확인, 한 번 더 누르면 차감
+function addLedger(amount, memo) {
+  data.ledger.push({ at: Date.now(), amount, memo });
+  save(); renderSpend(); renderLedger();
+  toast(`${amount > 0 ? '+' : ''}${amount}점 ${amount > 0 ? '줬어요' : '썼어요'} (남은 포인트 ${balance().toLocaleString()}점)`);
+}
+function renderSpend() {
+  $('spendBalance').textContent = balance().toLocaleString();
+  $('spendList').innerHTML = [...data.rewards].sort((a, b) => a.cost - b.cost).map((r) =>
+    `<button class="btn" data-spend="${r.id}">${esc(r.emoji)} ${esc(r.name)} <b>-${r.cost.toLocaleString()}</b></button>`).join('');
+}
+$('spendList').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-spend]');
+  if (!b) return;
+  const r = data.rewards.find((x) => x.id === b.dataset.spend);
+  if (!r) return;
+  if (balance() < r.cost) { toast(`포인트가 모자라요 (지금 ${balance().toLocaleString()}점)`); return; }
+  if (!b.classList.contains('confirm')) {
+    $('spendList').querySelectorAll('.confirm').forEach((x) => { x.classList.remove('confirm'); });
+    renderSpend();
+    const nb = $('spendList').querySelector(`[data-spend="${r.id}"]`);
+    nb.classList.add('confirm');
+    nb.innerHTML = `${r.cost.toLocaleString()}점 뺄까요? 한 번 더 누르세요`;
+    return;
+  }
+  addLedger(-r.cost, `사용: ${r.name}`);
+});
 
 function renderLedger() {
   const rows = [];
   for (const [key, rec] of Object.entries(data.days)) {
-    const p = dayPoints(rec);
-    if (p) rows.push({ at: new Date(key + 'T23:59:00').getTime(), amount: p, memo: `${key.slice(5).replace('-', '/')} 숙제` });
+    const p = dayTotal(key, rec);
+    if (p) rows.push({ at: keyToDate(key).getTime() + 86399000, amount: p, memo: '숙제' });
   }
   for (const l of data.ledger) rows.push(l);
   rows.sort((a, b) => b.at - a.at);
@@ -493,11 +659,9 @@ $('adjustForm').addEventListener('submit', (ev) => {
   ev.preventDefault();
   const amount = Math.trunc(Number($('adjustAmount').value));
   if (!amount) { toast('포인트를 숫자로 적어 주세요 (예: 20, -10)'); return; }
-  const memo = $('adjustMemo').value.trim() || (amount > 0 ? '부모님 보너스' : '포인트 차감');
-  data.ledger.push({ at: Date.now(), amount, memo });
+  const memo = $('adjustMemo').value.trim() || (amount > 0 ? '부모님 보너스' : '포인트 사용');
   $('adjustAmount').value = ''; $('adjustMemo').value = '';
-  save(); renderLedger();
-  toast(`${amount > 0 ? '+' : ''}${amount}점 적용했어요`);
+  addLedger(amount, memo);
 });
 $('pinForm').addEventListener('submit', (ev) => {
   ev.preventDefault();
@@ -522,8 +686,7 @@ $('importData').addEventListener('change', async (ev) => {
   try {
     const d = JSON.parse(await file.text());
     if (!d || !Array.isArray(d.fixed) || !d.days) throw new Error('형식 오류');
-    const base = defaultData();
-    data = { ...base, ...d, settings: { ...base.settings, ...d.settings } };
+    data = fromSaved(d);
     save(); renderSettings(); render();
     toast('백업을 불러왔어요');
   } catch (e) {
@@ -537,7 +700,7 @@ function toast(msg) {
   const t = $('toast');
   t.textContent = msg; t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 2200);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 2400);
 }
 function floatPoints(anchor, delta) {
   const r = anchor.getBoundingClientRect();
