@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>숙제 체크</title>
+<meta name="theme-color" content="#ff8a5b">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="title">
+    <h1 id="appTitle">오늘의 숙제</h1>
+    <div class="datenav">
+      <button id="prevDay" class="icon-btn" aria-label="이전 날">◀</button>
+      <span id="dateLabel"></span>
+      <button id="nextDay" class="icon-btn" aria-label="다음 날">▶</button>
+    </div>
+  </div>
+  <div class="points-badge" id="pointsBadge">
+    <span class="star">⭐</span>
+    <span id="pointsValue">0</span>
+    <span class="unit">점</span>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="card today">
+    <div class="week" id="weekStrip"></div>
+    <div id="pastNotice" class="past-notice" hidden>
+      지난 날짜예요. 고치려면 부모님 비밀번호가 필요해요.
+      <button id="unlockPast" class="btn small">고치기</button>
+    </div>
+    <ul class="hw-list" id="hwList"></ul>
+    <div id="allDone" class="all-done" hidden>🎉 오늘 숙제 끝! 정말 잘했어! 🎉</div>
+
+    <form class="extra-form" id="extraForm" autocomplete="off">
+      <input id="extraInput" type="text" placeholder="추가 숙제 적기 (예: 받아쓰기 연습)" maxlength="40">
+      <button class="btn primary" type="submit">＋ 추가</button>
+    </form>
+    <p class="legend"><b class="lg done">✓ 다 했어요</b> 포인트 전부 · <b class="lg half">△ 하다 말았어요</b> 포인트 조금</p>
+  </section>
+
+  <aside class="side">
+    <section class="card rewards">
+      <h2>🎁 보상</h2>
+      <div class="next-reward" id="nextReward"></div>
+      <ul class="reward-list" id="rewardList"></ul>
+    </section>
+
+    <section class="card tools">
+      <h2>🧰 도구</h2>
+      <form id="dictForm" class="dict-form" autocomplete="off">
+        <input id="dictInput" type="text" placeholder="영어 단어 찾기" autocapitalize="off" spellcheck="false">
+      </form>
+      <div class="dict-btns">
+        <button class="btn" data-dict="naver">네이버 사전</button>
+        <button class="btn" data-dict="daum">다음 사전</button>
+        <button class="btn" data-dict="papago">파파고 번역</button>
+      </div>
+      <button class="btn qr-btn" id="openQr">📷 QR 코드 읽기</button>
+    </section>
+  </aside>
+</main>
+
+<footer class="bottom">
+  <button class="btn ghost" id="openSettings">⚙ 부모님 설정</button>
+</footer>
+
+<!-- 부모님 설정 -->
+<section id="settings" class="settings" hidden>
+  <div class="settings-inner">
+    <div class="settings-head">
+      <h2>⚙ 부모님 설정</h2>
+      <button class="btn primary" id="closeSettings">완료</button>
+    </div>
+
+    <div class="card">
+      <h3>아이 이름</h3>
+      <input id="setName" type="text" placeholder="예: 지우" maxlength="10">
+    </div>
+
+    <div class="card">
+      <h3>고정 숙제</h3>
+      <p class="hint">요일을 눌러 그 요일에만 나오게 할 수 있어요.</p>
+      <ul id="fixedEditor" class="editor"></ul>
+      <button class="btn" id="addFixed">＋ 고정 숙제 추가</button>
+    </div>
+
+    <div class="card">
+      <h3>포인트 규칙</h3>
+      <label class="row">추가 숙제 포인트 <input id="setExtraPoints" type="number" min="0" max="1000"></label>
+      <label class="row">중간 체크(△) 비율 <select id="setHalfRatio">
+        <option value="0.3">30%</option><option value="0.5">50%</option><option value="0.7">70%</option>
+      </select></label>
+      <label class="row">추가 숙제 등록할 때 비밀번호 받기 <input id="setLockExtra" type="checkbox"></label>
+    </div>
+
+    <div class="card">
+      <h3>보상 목록</h3>
+      <ul id="rewardEditor" class="editor"></ul>
+      <button class="btn" id="addReward">＋ 보상 추가</button>
+    </div>
+
+    <div class="card">
+      <h3>포인트 직접 주기 / 빼기</h3>
+      <form id="adjustForm" class="adjust-form" autocomplete="off">
+        <input id="adjustAmount" type="number" placeholder="+20 또는 -10">
+        <input id="adjustMemo" type="text" placeholder="이유 (예: 방 청소 칭찬)" maxlength="30">
+        <button class="btn primary" type="submit">적용</button>
+      </form>
+      <h4>포인트 기록</h4>
+      <ul id="ledgerList" class="ledger"></ul>
+    </div>
+
+    <div class="card">
+      <h3>비밀번호 변경</h3>
+      <form id="pinForm" class="adjust-form" autocomplete="off">
+        <input id="newPin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="새 비밀번호 숫자 4자리">
+        <button class="btn" type="submit">변경</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>백업</h3>
+      <p class="hint">브라우저 데이터를 지우면 기록이 사라져요. 가끔 백업 파일을 저장해 두세요.</p>
+      <div class="row-btns">
+        <button class="btn" id="exportData">백업 파일 저장</button>
+        <label class="btn">백업 불러오기<input id="importData" type="file" accept="application/json,.json" hidden></label>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 비밀번호 입력 -->
+<div id="pinModal" class="modal" hidden>
+  <div class="modal-box pin-box">
+    <h3 id="pinTitle">부모님 비밀번호</h3>
+    <div class="pin-dots" id="pinDots"><i></i><i></i><i></i><i></i></div>
+    <div class="keypad" id="keypad"></div>
+    <button class="btn ghost" id="pinCancel">취소</button>
+  </div>
+</div>
+
+<!-- QR 읽기 -->
+<div id="qrModal" class="modal" hidden>
+  <div class="modal-box qr-box">
+    <h3>📷 QR 코드를 네모 안에 맞춰요</h3>
+    <div class="qr-view">
+      <video id="qrVideo" playsinline muted></video>
+      <div class="qr-frame"></div>
+    </div>
+    <p id="qrStatus" class="hint"></p>
+    <div id="qrResult" class="qr-result" hidden>
+      <p id="qrText"></p>
+      <div class="row-btns">
+        <button class="btn primary" id="qrOpen">열기</button>
+        <button class="btn" id="qrAgain">다시 읽기</button>
+      </div>
+    </div>
+    <div class="row-btns">
+      <label class="btn">사진 찍어서 읽기<input id="qrPhoto" type="file" accept="image/*" capture="environment" hidden></label>
+      <button class="btn ghost" id="qrClose">닫기</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+<canvas id="qrCanvas" hidden></canvas>
+
+<script src="jsQR.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
